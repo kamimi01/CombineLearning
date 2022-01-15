@@ -26,3 +26,61 @@
 /// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 /// THE SOFTWARE.
 
+import SwiftUI
+import Combine
+
+// 1. データバインディングができるようにする
+class WeeklyWeatherViewModel: ObservableObject, Identifiable {
+  // 2.cityプロパティを監視できるように
+  @Published var city: String = ""
+  // 3. ViewModel内にデータソースを保持しておく。
+  @Published var dataSource: [DailyWeatherRowViewModel] = []
+  
+  private let weatherFetcher: WeatherFetchable
+  
+  // 4. こうすることで、ネットワークが接続され、サーバー側のレスポンスを得ることができる
+  private var disposables = Set<AnyCancellable>()
+  
+  init(weatherFetcher: WeatherFetchable) {
+    self.weatherFetcher = weatherFetcher
+  }
+  
+  func fetchWeather(forCity city: String) {
+    // 1. OpenWeatherMapのAPIからデータを取得する
+    weatherFetcher.weeklyWeatherForecast(forCity: city)
+      .map { response in
+        // 2. WeeklyForecastResponseをDailyWeatherRowViewModelの配列にマッピングする
+        // WeeklyForecastResponseをそのままViewに渡すこともできるが、Viewがモデルから返ってきたものをフォーマットさせることになるので
+        // 良くない。Viewはレンダリングのみにフォーカスさせるべき
+        response.list.map(DailyWeatherRowViewModel.init)
+      }
+      // 3. 
+      .map(Array.removeDuplicates)
+      // 4. サーバーからのデータ取得やJSONのパースは、バックグラウンドで行われることがあるが
+      // UIの更新は、メインスレッドで行う必要がある。
+      // receiveを使うことで、5,6,7の処理が正しいスレッドで行われるようにすることができる
+      .receive(on: DispatchQueue.main)
+      // 5. このsinkメソッドを通じて、publisherが始まる
+      // 成功したか失敗したかで処理を制御する
+      .sink(
+        receiveCompletion: { [weak self] value in
+            guard let self = self else { return }
+            switch value {
+            case .failure:
+                // 6. 失敗したらdataSourceを空にする
+                self.dataSource = []
+            case .finished:
+                break
+            }
+        },
+        receiveValue: { [weak self] forecast in
+            guard let self = self else { return }
+            
+            // 7. 新しいforecastが来たら、dataSourceを更新する
+            self.dataSource = forecast
+        }
+      )
+      // 8. cancellableの参照を、disposableに追加する
+      .store(in: &disposables)
+  }
+}
