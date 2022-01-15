@@ -29,6 +29,18 @@
 import Foundation
 import Combine
 
+protocol WeatherFetchable {
+  // AnyPublisherの第一引数は、computationが成功したときに、返却される型
+  // AnyPublisherの第一引数は、computationが失敗したときに、返却される型
+  func weeklyWeatherForecast(
+    forCity city: String
+  ) -> AnyPublisher<WeeklyForecastResponse, WeatherError>
+  
+  func currentWeatherForecast(
+    forCity city: String
+  ) -> AnyPublisher<CurrentWeatherForecastResponse, WeatherError>
+}
+
 class WeatherFetcher {
   private let session: URLSession
   
@@ -80,5 +92,41 @@ private extension WeatherFetcher {
     ]
     
     return components
+  }
+}
+
+// MARK: - WeatherFetchable
+extension WeatherFetcher: WeatherFetchable {
+  func weeklyWeatherForecast(forCity city: String) -> AnyPublisher<WeeklyForecastResponse, WeatherError> {
+    return forecast(with: makeCurrentDayForecastComponents(withCity: city))
+  }
+  
+  func currentWeatherForecast(forCity city: String) -> AnyPublisher<CurrentWeatherForecastResponse, WeatherError> {
+    return forecast(with: makeCurrentDayForecastComponents(withCity: city))
+  }
+  
+  private func forecast<T>(
+    with components: URLComponents
+  ) -> AnyPublisher<T, WeatherError> where T: Decodable {
+    // 1. URLComponentsからURLのインスタンスを作成
+    guard let url = components.url else {
+      let error = WeatherError.network(description: "Couldn't create URL")
+      // operatorを繋げるほど、型が複雑になるので、その型をeraseする。これによってメソッドの戻り値と同じ型になる
+      return Fail(error: error).eraseToAnyPublisher()
+    }
+    
+    // 2. URLRequestのインスタンスを受け取り、タプルで(Data, URLResponse)またはURLErrorを返す
+    return session.dataTaskPublisher(for: URLRequest(url: url))
+      // 3. forecastのメソッドは、AnyPublisher<T, WeatherError>を返すので、URLErrorからWeatherErrorにマップする
+      .mapError { error in
+        .network(description: error.localizedDescription)
+      }
+      // 4. JSONとして受け取ったdataをオブジェクトに変換する
+      // 初めを.max(1)にすることで、一番最初のpublisherのみ実行する
+      .flatMap(maxPublishers: .max(1)) { pair in
+        decode(pair.data)
+      }
+      // 5. 型を最終的にeraseしてメソッドの戻り値を同じ型にする
+      .eraseToAnyPublisher()
   }
 }
