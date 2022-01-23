@@ -41,8 +41,23 @@ class WeeklyWeatherViewModel: ObservableObject, Identifiable {
   // 4. こうすることで、ネットワークが接続され、サーバー側のレスポンスを得ることができる
   private var disposables = Set<AnyCancellable>()
   
-  init(weatherFetcher: WeatherFetchable) {
+  init(
+    weatherFetcher: WeatherFetchable,
+    scheduler: DispatchQueue = DispatchQueue(label: "WeatherViewModel")
+  ) {
     self.weatherFetcher = weatherFetcher
+    
+    // 2. cityは`@Published`プロパティなので、Publisherのように振る舞うことができる
+    $city
+      // 3. observationが作成され次第、cityは値を放出するが、最初の値は空文字なので、スキップする
+      .dropFirst(1)
+      // 4. これがないと、文字がタイプされるごとに、fetchWeateherが呼ばれる。0.5秒遅らせる。
+      // ユーザーの入力が止まれば、値が送られる
+      .debounce(for: .seconds(0.5), scheduler: scheduler)
+      // 5.
+      .sink(receiveValue: fetchWeather(forCity:))
+      // 6.
+      .store(in: &disposables)
   }
   
   func fetchWeather(forCity city: String) {
